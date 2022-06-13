@@ -1,4 +1,5 @@
-import os, os.path as osp
+import os
+import os.path as osp
 import sys
 from PIL import Image
 import numpy as np
@@ -6,25 +7,42 @@ from yacs.config import CfgNode
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Slerp
 import math
+import torch
+
 
 class AttrDict(dict):
-  __getattr__ = dict.__getitem__
-  __setattr__ = dict.__setitem__
+    __getattr__ = dict.__getitem__
+    __setattr__ = dict.__setitem__
+
+
+cuda = torch.cuda.is_available()
+DEVICE = "cuda:1" if cuda else "cpu"
+if cuda:
+    print("CUDA GPU!")
+else:
+    print("CPU!")
+
+
+def write_log(log_file, string):
+    print(string)
+    if log_file is not None:
+        log_file.write(string + '\n')
+        log_file.flush()
 
 
 # Estimate rigid transform with SVD (from Nghia Ho)
 def register_corresponding_points(A, B, return_error=True):
     assert len(A) == len(B)
-    N = A.shape[0]; # Total points
+    N = A.shape[0]  # Total points
     centroid_A = np.mean(A, axis=0)
     centroid_B = np.mean(B, axis=0)
-    AA = A - np.tile(centroid_A, (N, 1)) # Centre the points
+    AA = A - np.tile(centroid_A, (N, 1))  # Centre the points
     BB = B - np.tile(centroid_B, (N, 1))
-    H = np.dot(np.transpose(AA), BB) # Dot is matrix multiplication for array
+    H = np.dot(np.transpose(AA), BB)  # Dot is matrix multiplication for array
     U, S, Vt = np.linalg.svd(H)
     R = np.dot(Vt.T, U.T)
-    if np.linalg.det(R) < 0: # Special reflection case
-        Vt[2,:] *= -1
+    if np.linalg.det(R) < 0:  # Special reflection case
+        Vt[2, :] *= -1
         R = np.dot(Vt.T, U.T)
     t = np.dot(-R, centroid_A.T) + centroid_B.T
     # return R, t
@@ -36,8 +54,8 @@ def register_corresponding_points(A, B, return_error=True):
         registered_pts = transform_pcd(B, T)
         # error = np.transpose(registered_pts) - A
         error = registered_pts - A
-        error = np.sum(np.multiply(error,error))
-        rmse = np.sqrt(error/A.shape[0])
+        error = np.sum(np.multiply(error, error))
+        rmse = np.sqrt(error / A.shape[0])
     else:
         rmse = None
     return T, rmse
@@ -46,7 +64,6 @@ def register_corresponding_points(A, B, return_error=True):
 def np2img(np_array, img_file):
     im = Image.fromarray(np_array)
     im.save(img_file)
-
 
 
 def safe_makedirs(dirname):
@@ -86,9 +103,9 @@ def cn2dict(config):
 
 def crop_pcd(raw_pts, x=[0.0, 0.7], y=[-0.4, 0.4], z=[0.9, 1.5]):
     npw = np.where(
-            (raw_pts[:, 0] > min(x)) & (raw_pts[:, 0] < max(x)) &
-            (raw_pts[:, 1] > min(y)) & (raw_pts[:, 1] < max(y)) &
-            (raw_pts[:, 2] > min(z)) & (raw_pts[:, 2] < max(z)))
+        (raw_pts[:, 0] > min(x)) & (raw_pts[:, 0] < max(x)) &
+        (raw_pts[:, 1] > min(y)) & (raw_pts[:, 1] < max(y)) &
+        (raw_pts[:, 2] > min(z)) & (raw_pts[:, 2] < max(z)))
     return raw_pts[npw[0], :]
 
 
@@ -129,7 +146,7 @@ class PoseStamped():
 
 
 def get_2d_pose(pose3d):
-    #1. extract rotation about z-axis
+    # 1. extract rotation about z-axis
     T = matrix_from_pose(pose3d)
     # euler_angles_list = tf.transformations.euler_from_matrix(T, 'rxyz')
     r = R.from_matrix(T[:3, :3])
@@ -249,7 +266,7 @@ def get_transform(pose_frame_target, pose_frame_source):
     :param pose_frame_source:
     :return:
     """
-    #both poses must be expressed in same reference frame
+    # both poses must be expressed in same reference frame
     T_target_world = matrix_from_pose(pose_frame_target)
     T_source_world = matrix_from_pose(pose_frame_source)
     T_relative_world = np.matmul(T_target_world, np.linalg.inv(T_source_world))
@@ -281,7 +298,8 @@ def scale_matrix(factor, origin=None):
     if not isinstance(factor, list) and not isinstance(factor, np.ndarray):
         M = np.diag([factor, factor, factor, 1.0])
     else:
-        assert len(factor) == 3, 'If applying different scaling per dimension, must pass in 3-element list or array'
+        assert len(
+            factor) == 3, 'If applying different scaling per dimension, must pass in 3-element list or array'
         #M = np.diag([factor[0], factor[1], factor[2], 1.0])
         M = np.eye(4)
         M[0, 0] = factor[0]
@@ -351,18 +369,18 @@ def interpolate_pose(pose_initial, pose_final, N, frac=1):
     pose_final_list = pose_stamped2list(pose_final)
     trans_initial = pose_initial_list[0:3]
     quat_initial = pose_initial_list[3:7]
-     # onvert to pyquaterion convertion (w,x,y,z)
+    # onvert to pyquaterion convertion (w,x,y,z)
     trans_final = pose_final_list[0:3]
     quat_final = pose_final_list[3:7]
 
     trans_interp_total = [np.linspace(trans_initial[0], trans_final[0], num=N),
                           np.linspace(trans_initial[1], trans_final[1], num=N),
                           np.linspace(trans_initial[2], trans_final[2], num=N)]
-    
+
     key_rots = R.from_quat([quat_initial, quat_final])
     slerp = Slerp(np.arange(2), key_rots)
     interp_rots = slerp(np.linspace(0, 1, N))
-    quat_interp_total = interp_rots.as_quat()    
+    quat_interp_total = interp_rots.as_quat()
 
     pose_interp = []
     for counter in range(int(frac * N)):
@@ -370,7 +388,7 @@ def interpolate_pose(pose_initial, pose_final, N, frac=1):
             trans_interp_total[0][counter],
             trans_interp_total[1][counter],
             trans_interp_total[2][counter],
-            quat_interp_total[counter][0], #return in ROS ordering w,x,y,z
+            quat_interp_total[counter][0],  # return in ROS ordering w,x,y,z
             quat_interp_total[counter][1],
             quat_interp_total[counter][2],
             quat_interp_total[counter][3],
@@ -389,12 +407,12 @@ def transform_pose(pose_source, pose_transform):
 
 
 def transform_body(pose_source_world, pose_transform_target_body):
-    #convert source to target frame
+    # convert source to target frame
     pose_source_body = convert_reference_frame(pose_source_world,
                                                pose_source_world,
                                                unit_pose(),
                                                frame_id="body_frame")
-    #perform transformation in body frame
+    # perform transformation in body frame
     pose_source_rotated_body = transform_pose(pose_source_body,
                                               pose_transform_target_body)
     # rotate back
@@ -406,7 +424,7 @@ def transform_body(pose_source_world, pose_transform_target_body):
 
 
 def vec_from_pose(pose):
-    #get unit vectors of rotation from pose
+    # get unit vectors of rotation from pose
     quat = pose.pose.orientation
     # T = tf.transformations.quaternion_matrix([quat.x, quat.y, quat.z, quat.w])
     T = np.zeros((4, 4,))
@@ -508,10 +526,10 @@ def pose_difference_np(pose, pose_ref, rs=False):
 
     # dot_prod = np.dot(ori_1, ori_2)
     dot_prod1 = np.clip(np.dot(ori_1, ori_2), 0, 1)
-    angle_diff1 = np.arccos(2*dot_prod1**2 - 1)
+    angle_diff1 = np.arccos(2 * dot_prod1**2 - 1)
 
     dot_prod2 = np.clip(np.dot(ori_1, -ori_2), 0, 1)
-    angle_diff2 = np.arccos(2*dot_prod2**2 - 1)    
+    angle_diff2 = np.arccos(2 * dot_prod2**2 - 1)
 
     if rs:
         angle_diff1 = 1 - rot_similarity
@@ -521,10 +539,10 @@ def pose_difference_np(pose, pose_ref, rs=False):
 
 def ori_difference(ori_1, ori_2):
     dot_prod1 = np.clip(np.dot(ori_1, ori_2), 0, 1)
-    angle_diff1 = np.arccos(2*dot_prod1**2 - 1)
+    angle_diff1 = np.arccos(2 * dot_prod1**2 - 1)
 
     dot_prod2 = np.clip(np.dot(ori_1, -ori_2), 0, 1)
-    angle_diff2 = np.arccos(2*dot_prod2**2 - 1)    
+    angle_diff2 = np.arccos(2 * dot_prod2**2 - 1)
     return min(angle_diff1, angle_diff2)
 
 
@@ -538,6 +556,7 @@ def pose_from_vectors(x_vec, y_vec, z_vec, trans, frame_id="yumi_body"):
                              type_out="PoseStamped",
                              frame_out=frame_id)
     return pose
+
 
 def transform_vectors(vectors, pose_transform):
     """Transform a set of vectors
@@ -558,6 +577,7 @@ def transform_vectors(vectors, pose_transform):
     vectors_trans_homog = np.matmul(T_transform, vectors_homog)
     vectors_trans = vectors_trans_homog[:-1, :].T
     return vectors_trans
+
 
 def sample_orthogonal_vector(reference_vector):
     """Sample a random unit vector that is orthogonal to the specified reference
@@ -593,7 +613,8 @@ def project_point2plane(point, plane_normal, plane_points):
     point_plane = plane_points[0]
     w = point - point_plane
     dist = (np.dot(plane_normal, w) / np.linalg.norm(plane_normal))
-    projected_point = point - dist * plane_normal / np.linalg.norm(plane_normal)
+    projected_point = point - dist * \
+        plane_normal / np.linalg.norm(plane_normal)
     return projected_point, dist
 
 
@@ -638,7 +659,7 @@ def body_world_yaw(current_pose, theta=None):
     return new_pose
 
 
-def rand_body_yaw_transform(pos, min_theta=0.0, max_theta=2*np.pi):
+def rand_body_yaw_transform(pos, min_theta=0.0, max_theta=2 * np.pi):
     """Given some initial position, sample a Transform that is
     a pure yaw about the world frame orientation, with
     the origin at the current pose position
@@ -652,7 +673,7 @@ def rand_body_yaw_transform(pos, min_theta=0.0, max_theta=2*np.pi):
         np.ndarray: Transformation matrix
     """
     if isinstance(pos, list):
-        pos = np.asarray(pos)    
+        pos = np.asarray(pos)
     trans_to_origin = pos
     theta = np.random.random() * (max_theta - min_theta) + min_theta
     yaw = R.from_euler('xyz', [0, 0, theta]).as_matrix()[:3, :3]
@@ -676,7 +697,8 @@ def rand_body_yaw_transform(pos, min_theta=0.0, max_theta=2*np.pi):
 
 def get_base_pose_pb(obj_id, pb_client_id=0):
     import pybullet as p
-    pose = p.getBasePositionAndOrientation(obj_id, physicsClientId=pb_client_id)
+    pose = p.getBasePositionAndOrientation(
+        obj_id, physicsClientId=pb_client_id)
     pos, ori = list(pose[0]), list(pose[1])
     pose = list2pose_stamped(pos + ori)
     return pose
@@ -693,58 +715,61 @@ def transform_pcd(pcd, transform):
 # from https://github.com/google-research/google-research/blob/3ed7475fef726832c7288044c806481adc6de827/implicit_pdf/models.py#L381
 
 def generate_healpix_grid(recursion_level=None, size=None):
-  """Generates an equivolumetric grid on SO(3) following Yershova et al. (2010).
-  Uses a Healpix grid on the 2-sphere as a starting point and then tiles it
-  along the 'tilt' direction 6*2**recursion_level times over 2pi.
-  Args:
-    recursion_level: An integer which determines the level of resolution of the
-      grid.  The final number of points will be 72*8**recursion_level.  A
-      recursion_level of 2 (4k points) was used for training and 5 (2.4M points)
-      for evaluation.
-    size: A number of rotations to be included in the grid.  The nearest grid
-      size in log space is returned.
-  Returns:
-    (N, 3, 3) array of rotation matrices, where N=72*8**recursion_level.
-  """
-  import healpy as hp  # pylint: disable=g-import-not-at-top
-  from airobot.utils import common
+    """Generates an equivolumetric grid on SO(3) following Yershova et al. (2010).
+    Uses a Healpix grid on the 2-sphere as a starting point and then tiles it
+    along the 'tilt' direction 6*2**recursion_level times over 2pi.
+    Args:
+      recursion_level: An integer which determines the level of resolution of the
+        grid.  The final number of points will be 72*8**recursion_level.  A
+        recursion_level of 2 (4k points) was used for training and 5 (2.4M points)
+        for evaluation.
+      size: A number of rotations to be included in the grid.  The nearest grid
+        size in log space is returned.
+    Returns:
+      (N, 3, 3) array of rotation matrices, where N=72*8**recursion_level.
+    """
+    import healpy as hp  # pylint: disable=g-import-not-at-top
+    from airobot.utils import common
 
-  assert not(recursion_level is None and size is None)
-  if size:
-    recursion_level = max(int(np.round(np.log(size/72.)/np.log(8.))), 0)
-  number_per_side = 2**recursion_level
-  number_pix = hp.nside2npix(number_per_side)
-  s2_points = hp.pix2vec(number_per_side, np.arange(number_pix))
-  s2_points = np.stack([*s2_points], 1)
+    assert not(recursion_level is None and size is None)
+    if size:
+        recursion_level = max(
+            int(np.round(np.log(size / 72.) / np.log(8.))), 0)
+    number_per_side = 2**recursion_level
+    number_pix = hp.nside2npix(number_per_side)
+    s2_points = hp.pix2vec(number_per_side, np.arange(number_pix))
+    s2_points = np.stack([*s2_points], 1)
 
-  # Take these points on the sphere and
-  azimuths = np.arctan2(s2_points[:, 1], s2_points[:, 0])
-  tilts = np.linspace(0, 2*np.pi, 6*2**recursion_level, endpoint=False)
-  polars = np.arccos(s2_points[:, 2])
-  grid_rots_mats = []
-  for tilt in tilts:
-    # Build up the rotations from Euler angles, zyz format
-    # rot_mats = tfg.rotation_matrix_3d.from_euler(
-    #     np.stack([azimuths,
-    #               np.zeros(number_pix),
-    #               np.zeros(number_pix)], 1))
-    # rot_mats = rot_mats @ tfg.rotation_matrix_3d.from_euler(
-    #     np.stack([np.zeros(number_pix),
-    #               np.zeros(number_pix),
-    #               polars], 1))
-    # rot_mats = rot_mats @ tf.expand_dims(
-    #     tfg.rotation_matrix_3d.from_euler([tilt, 0., 0.]), 0)
+    # Take these points on the sphere and
+    azimuths = np.arctan2(s2_points[:, 1], s2_points[:, 0])
+    tilts = np.linspace(0, 2 * np.pi, 6 * 2**recursion_level, endpoint=False)
+    polars = np.arccos(s2_points[:, 2])
+    grid_rots_mats = []
+    for tilt in tilts:
+        # Build up the rotations from Euler angles, zyz format
+        # rot_mats = tfg.rotation_matrix_3d.from_euler(
+        #     np.stack([azimuths,
+        #               np.zeros(number_pix),
+        #               np.zeros(number_pix)], 1))
+        # rot_mats = rot_mats @ tfg.rotation_matrix_3d.from_euler(
+        #     np.stack([np.zeros(number_pix),
+        #               np.zeros(number_pix),
+        #               polars], 1))
+        # rot_mats = rot_mats @ tf.expand_dims(
+        #     tfg.rotation_matrix_3d.from_euler([tilt, 0., 0.]), 0)
 
-    euler = np.stack([azimuths, np.zeros(number_pix), np.zeros(number_pix)], 1)
-    rot_mats = common.euler2rot(euler)
+        euler = np.stack(
+            [azimuths, np.zeros(number_pix), np.zeros(number_pix)], 1)
+        rot_mats = common.euler2rot(euler)
 
-    euler2 = np.stack([np.zeros(number_pix), np.zeros(number_pix), polars], 1)
-    rot_mats = rot_mats @ common.euler2rot(euler2)
+        euler2 = np.stack(
+            [np.zeros(number_pix), np.zeros(number_pix), polars], 1)
+        rot_mats = rot_mats @ common.euler2rot(euler2)
 
-    euler3 = [tilt, 0, 0]
-    rot_mats = rot_mats @ common.euler2rot(euler3)
+        euler3 = [tilt, 0, 0]
+        rot_mats = rot_mats @ common.euler2rot(euler3)
 
-    grid_rots_mats.append(rot_mats)
+        grid_rots_mats.append(rot_mats)
 
-  grid_rots_mats = np.concatenate(grid_rots_mats, 0)
-  return grid_rots_mats
+    grid_rots_mats = np.concatenate(grid_rots_mats, 0)
+    return grid_rots_mats

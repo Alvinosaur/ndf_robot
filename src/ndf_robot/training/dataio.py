@@ -14,12 +14,15 @@ class JointOccTrainDataset(Dataset):
     def __init__(self, sidelength, depth_aug=False, multiview_aug=False, phase='train', obj_class='all'):
 
         # Path setup (change to folder where your training data is kept)
-        ## these are the names of the full dataset folders
-        mug_path = osp.join(path_util.get_ndf_data(), 'training_data/mug_table_all_pose_4_cam_half_occ_full_rand_scale')
-        bottle_path = osp.join(path_util.get_ndf_data(), 'training/bottle_table_all_pose_4_cam_half_occ_full_rand_scale')
-        bowl_path = osp.join(path_util.get_ndf_data(), 'training/bowl_table_all_pose_4_cam_half_occ_full_rand_scale')
+        # these are the names of the full dataset folders
+        mug_path = osp.join(path_util.get_ndf_data(
+        ), 'training_data/mug_table_all_pose_4_cam_half_occ_full_rand_scale')
+        bottle_path = osp.join(path_util.get_ndf_data(
+        ), 'training_data/bottle_table_all_pose_4_cam_half_occ_full_rand_scale')
+        bowl_path = osp.join(path_util.get_ndf_data(
+        ), 'training_data/bowl_table_all_pose_4_cam_half_occ_full_rand_scale')
 
-        ## these are the names of the mini-dataset folders, to ensure everything is up and running
+        # these are the names of the mini-dataset folders, to ensure everything is up and running
         # mug_path = osp.join(path_util.get_ndf_data(), 'training_data/test_mug')
         # bottle_path = osp.join(path_util.get_ndf_data(), 'training_data/test_bottle')
         # bowl_path = osp.join(path_util.get_ndf_data(), 'training_data/test_bowl')
@@ -39,7 +42,7 @@ class JointOccTrainDataset(Dataset):
 
         files_total = []
         for path in paths:
-            files = list(sorted(glob.glob(path+"/*.npz")))
+            files = list(sorted(glob.glob(path + "/*.npz")))
             n = len(files)
             idx = int(0.9 * n)
 
@@ -56,17 +59,21 @@ class JointOccTrainDataset(Dataset):
         self.depth_aug = depth_aug
         self.multiview_aug = multiview_aug
 
-        block = 128 
+        block = 128
         bs = 1 / block
         hbs = bs * 0.5
         self.bs = bs
         self.hbs = hbs
 
-        self.shapenet_mug_dict = pickle.load(open(osp.join(path_util.get_ndf_data(), 'training_data/occ_shapenet_mug.p'), 'rb'))
-        self.shapenet_bowl_dict = pickle.load(open(osp.join(path_util.get_ndf_data(), 'training_data/occ_shapenet_bowl.p'), "rb"))
-        self.shapenet_bottle_dict = pickle.load(open(osp.join(path_util.get_ndf_data(), 'training_data/occ_shapenet_bottle.p'), "rb"))
+        self.shapenet_mug_dict = pickle.load(open(
+            osp.join(path_util.get_ndf_data(), 'training_data/occ_shapenet_mug.p'), 'rb'))
+        self.shapenet_bowl_dict = pickle.load(open(
+            osp.join(path_util.get_ndf_data(), 'training_data/occ_shapenet_bowl.p'), "rb"))
+        self.shapenet_bottle_dict = pickle.load(open(osp.join(
+            path_util.get_ndf_data(), 'training_data/occ_shapenet_bottle.p'), "rb"))
 
-        self.shapenet_dict = {'03797390': self.shapenet_mug_dict, '02880940': self.shapenet_bowl_dict, '02876657': self.shapenet_bottle_dict}
+        self.shapenet_dict = {'03797390': self.shapenet_mug_dict,
+                              '02880940': self.shapenet_bowl_dict, '02876657': self.shapenet_bottle_dict}
 
         self.projection_mode = "perspective"
 
@@ -81,9 +88,10 @@ class JointOccTrainDataset(Dataset):
     def get_item(self, index):
         try:
             data = np.load(self.files[index], allow_pickle=True)
-            posecam =  data['object_pose_cam_frame']  # legacy naming, used to use pose expressed in camera frame. global reference frame doesn't matter though
+            # legacy naming, used to use pose expressed in camera frame. global reference frame doesn't matter though
+            posecam = data['object_pose_cam_frame']
 
-            idxs = list(range(posecam.shape[0]))
+            idxs = list(range(posecam.shape[0]))  # Is this a video seq?
             random.shuffle(idxs)
             select = random.randint(1, 4)
 
@@ -109,6 +117,9 @@ class JointOccTrainDataset(Dataset):
             for i in idxs:
                 seg = data['object_segmentation'][i, 0]
                 depth = data['depth_observation'][i]
+                # TODO: what is this rix doing?
+                # import ipdb
+                # ipdb.set_trace()
                 rix = np.random.permutation(depth.shape[0])[:1000]
                 seg = seg[rix]
                 depth = depth[rix]
@@ -134,25 +145,32 @@ class JointOccTrainDataset(Dataset):
 
             intrinsics = np.array(
                 [[hor_f, 0., sensor_half_width, 0.],
-                [0., vert_f, sensor_half_height, 0.],
-                [0., 0., 1., 0.]]
+                 [0., vert_f, sensor_half_height, 0.],
+                 [0., 0., 1., 0.]]
             )
 
             # Rescale to new sidelength
             intrinsics = torch.from_numpy(intrinsics)
 
             # build depth images from data
+            # TODO: how is "depth" different from this? Why cannot just use "depth" directly?
+            # import ipdb
+            # ipdb.set_trace()
             dp_nps = []
             for i in range(len(segs)):
                 seg_mask = segs[i]
-                dp_np = geometry.lift(x.flatten()[seg_mask], y.flatten()[seg_mask], depths[i].flatten(), intrinsics[None, :, :])
-                dp_np = torch.cat([dp_np, torch.ones_like(dp_np[..., :1])], dim=-1)
+                dp_np = geometry.lift(x.flatten()[seg_mask], y.flatten()[
+                                      seg_mask], depths[i].flatten(), intrinsics[None, :, :])
+                dp_np = torch.cat(
+                    [dp_np, torch.ones_like(dp_np[..., :1])], dim=-1)
                 dp_nps.append(dp_np)
 
             # load in voxel occupancy data
-            voxel_path = osp.join(category_id, shapenet_id, 'models', 'model_normalized_128.mat')
+            voxel_path = osp.join(category_id, shapenet_id,
+                                  'models', 'model_normalized_128.mat')
             coord, voxel_bool, _ = self.shapenet_dict[category_id][voxel_path]
 
+            # coord: the center of each voxel bin
             rix = np.random.permutation(coord.shape[0])
 
             coord = coord[rix[:1500]]
@@ -167,7 +185,8 @@ class JointOccTrainDataset(Dataset):
             # transform everything into the same frame
             transforms = []
             for quat, pos in zip(quats, poses):
-                quat_list = [float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])]
+                quat_list = [float(quat[0]), float(quat[1]),
+                             float(quat[2]), float(quat[3])]
                 rotation_matrix = Rotation.from_quat(quat_list)
                 rotation_matrix = rotation_matrix.as_matrix()
 
@@ -177,17 +196,21 @@ class JointOccTrainDataset(Dataset):
                 transform = torch.from_numpy(transform)
                 transforms.append(transform)
 
-
             transform = transforms[0]
             coord = torch.cat([coord, torch.ones_like(coord[..., :1])], dim=-1)
-            coord = torch.sum(transform[None, :, :] * coord[:, None, :], dim=-1)
+            coord = torch.sum(transform[None, :, :]
+                              * coord[:, None, :], dim=-1)
             coord = coord[..., :3]
 
             points_world = []
 
+            # TODO: what is this transform doing?
+            # ipdb.set_trace()
             for i, dp_np in enumerate(dp_nps):
-                point_transform = torch.matmul(transform, torch.inverse(transforms[i]))
-                dp_np = torch.sum(point_transform[None, :, :] * dp_np[:, None, :], dim=-1)
+                point_transform = torch.matmul(
+                    transform, torch.inverse(transforms[i]))
+                dp_np = torch.sum(
+                    point_transform[None, :, :] * dp_np[:, None, :], dim=-1)
                 points_world.append(dp_np[..., :3])
 
             point_cloud = torch.cat(points_world, dim=0)
@@ -215,9 +238,9 @@ class JointOccTrainDataset(Dataset):
             return res, {'occ': torch.from_numpy(labels).float()}
 
         except Exception as e:
-           print(e)
+            print(e)
         #    print(file)
-           return self.get_item(index=random.randint(0, self.__len__() - 1))
+            return self.get_item(index=random.randint(0, self.__len__() - 1))
 
     def __getitem__(self, index):
         return self.get_item(index)

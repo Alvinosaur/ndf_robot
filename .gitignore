@@ -1,0 +1,15 @@
+**/__pycache__
+**.egg-info/
+.vscode/
+nohup.out
+optimal_eval_metrics.txt
+run_training.sh
+src/ndf_robot/assets/
+src/ndf_robot/data/
+src/ndf_robot/descriptions/demo_objects/
+src/ndf_robot/descriptions/objects/
+src/ndf_robot/eval/debug_viz/
+src/ndf_robot/eval/vid_visualization/
+src/ndf_robot/eval/visualization/
+src/ndf_robot/eval_data/
+src/ndf_robot/model_weights/

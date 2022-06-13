@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from ndf_robot.model.layers_equi import *
 
+
 def maxpool(x, dim=-1, keepdim=False):
     out, _ = x.max(dim=dim, keepdim=keepdim)
     return out
@@ -11,6 +12,7 @@ def meanpool(x, dim=-1, keepdim=False):
     out = x.mean(dim=dim, keepdim=keepdim)
     return out
 
+
 class VNN_DGCNN(nn.Module):
     def __init__(self, c_dim=128, dim=3, hidden_dim=64, k=20):
         super(VNN_DGCNN, self).__init__()
@@ -18,16 +20,17 @@ class VNN_DGCNN(nn.Module):
         self.k = k
 
         self.conv1 = VNLinearLeakyReLU(2, hidden_dim)
-        self.conv2 = VNLinearLeakyReLU(hidden_dim*2, hidden_dim)
-        self.conv3 = VNLinearLeakyReLU(hidden_dim*2, hidden_dim)
-        self.conv4 = VNLinearLeakyReLU(hidden_dim*2, hidden_dim)
+        self.conv2 = VNLinearLeakyReLU(hidden_dim * 2, hidden_dim)
+        self.conv3 = VNLinearLeakyReLU(hidden_dim * 2, hidden_dim)
+        self.conv4 = VNLinearLeakyReLU(hidden_dim * 2, hidden_dim)
 
         self.pool1 = meanpool
         self.pool2 = meanpool
         self.pool3 = meanpool
         self.pool4 = meanpool
 
-        self.conv_c = VNLinearLeakyReLU(hidden_dim*4, c_dim, dim=4, share_nonlinearity=True)
+        self.conv_c = VNLinearLeakyReLU(
+            hidden_dim * 4, c_dim, dim=4, share_nonlinearity=True)
 
     def forward(self, x):
 
@@ -61,7 +64,7 @@ class VNNOccNet(nn.Module):
                  latent_dim,
                  model_type='pointnet',
                  sigmoid=True,
-                 return_features=False, 
+                 return_features=False,
                  acts='all',
                  scaling=10.0):
         super().__init__()
@@ -72,40 +75,43 @@ class VNNOccNet(nn.Module):
 
         if model_type == 'dgcnn':
             self.model_type = 'dgcnn'
-            self.encoder = VNN_DGCNN(c_dim=latent_dim) # modified resnet-18
+            self.encoder = VNN_DGCNN(c_dim=latent_dim)  # modified resnet-18
         else:
             self.model_type = 'pointnet'
-            self.encoder = VNN_ResnetPointnet(c_dim=latent_dim) # modified resnet-18
+            self.encoder = VNN_ResnetPointnet(
+                c_dim=latent_dim)  # modified resnet-18
 
-        self.decoder = DecoderInner(dim=3, z_dim=latent_dim, c_dim=0, hidden_size=latent_dim, leaky=True, sigmoid=sigmoid, return_features=return_features, acts=acts)
-
+        self.decoder = DecoderInner(dim=3, z_dim=latent_dim, c_dim=0, hidden_size=latent_dim,
+                                    leaky=True, sigmoid=sigmoid, return_features=return_features, acts=acts)
 
     def forward(self, input):
         out_dict = {}
 
-        enc_in = input['point_cloud'] * self.scaling 
-        query_points = input['coords'] * self.scaling 
+        enc_in = input['point_cloud'] * self.scaling
+        query_points = input['coords'] * self.scaling
 
         z = self.encoder(enc_in)
 
         if self.return_features:
-            out_dict['occ'], out_dict['features'] = self.decoder(query_points, z)
+            out_dict['occ'], out_dict['features'] = self.decoder(
+                query_points, z)
         else:
             out_dict['occ'] = self.decoder(query_points, z)
 
         return out_dict
 
     def extract_latent(self, input):
-        enc_in = input['point_cloud'] * self.scaling 
+        enc_in = input['point_cloud'] * self.scaling
         z = self.encoder(enc_in)
         return z
 
     def forward_latent(self, z, coords):
         out_dict = {}
-        coords = coords * self.scaling 
+        coords = coords * self.scaling
         out_dict['occ'], out_dict['features'] = self.decoder(coords, z)
 
         return out_dict['features']
+
 
 class VNN_ResnetPointnet(nn.Module):
     ''' DGCNN-based VNN encoder network with ResNet blocks.
@@ -122,22 +128,26 @@ class VNN_ResnetPointnet(nn.Module):
         self.k = k
         self.meta_output = meta_output
 
-        self.conv_pos = VNLinearLeakyReLU(3, 128, negative_slope=0.2, share_nonlinearity=False, use_batchnorm=False)
-        self.fc_pos = VNLinear(128, 2*hidden_dim)
-        self.block_0 = VNResnetBlockFC(2*hidden_dim, hidden_dim)
-        self.block_1 = VNResnetBlockFC(2*hidden_dim, hidden_dim)
-        self.block_2 = VNResnetBlockFC(2*hidden_dim, hidden_dim)
-        self.block_3 = VNResnetBlockFC(2*hidden_dim, hidden_dim)
-        self.block_4 = VNResnetBlockFC(2*hidden_dim, hidden_dim)
+        self.conv_pos = VNLinearLeakyReLU(
+            3, 128, negative_slope=0.2, share_nonlinearity=False, use_batchnorm=False)
+        self.fc_pos = VNLinear(128, 2 * hidden_dim)
+        self.block_0 = VNResnetBlockFC(2 * hidden_dim, hidden_dim)
+        self.block_1 = VNResnetBlockFC(2 * hidden_dim, hidden_dim)
+        self.block_2 = VNResnetBlockFC(2 * hidden_dim, hidden_dim)
+        self.block_3 = VNResnetBlockFC(2 * hidden_dim, hidden_dim)
+        self.block_4 = VNResnetBlockFC(2 * hidden_dim, hidden_dim)
         self.fc_c = VNLinear(hidden_dim, c_dim)
 
-        self.actvn_c = VNLeakyReLU(hidden_dim, negative_slope=0.2, share_nonlinearity=False)
+        self.actvn_c = VNLeakyReLU(
+            hidden_dim, negative_slope=0.2, share_nonlinearity=False)
         self.pool = meanpool
 
         if meta_output == 'invariant_latent':
-            self.std_feature = VNStdFeature(c_dim, dim=3, normalize_frame=True, use_batchnorm=False)
+            self.std_feature = VNStdFeature(
+                c_dim, dim=3, normalize_frame=True, use_batchnorm=False)
         elif meta_output == 'invariant_latent_linear':
-            self.std_feature = VNStdFeature(c_dim, dim=3, normalize_frame=True, use_batchnorm=False)
+            self.std_feature = VNStdFeature(
+                c_dim, dim=3, normalize_frame=True, use_batchnorm=False)
             self.vn_inv = VNLinear(c_dim, 3)
         elif meta_output == 'equivariant_latent_linear':
             self.vn_inv = VNLinear(c_dim, 3)
@@ -147,13 +157,16 @@ class VNN_ResnetPointnet(nn.Module):
         p = p.unsqueeze(1).transpose(2, 3)
         #mean = get_graph_mean(p, k=self.k)
         #mean = p_trans.mean(dim=-1, keepdim=True).expand(p_trans.size())
+
+        # feat: torch.Size([32, 3(feat dim), 3(x y z), 1000, 20(knn)])
         feat = get_graph_feature_cross(p, k=self.k)
         net = self.conv_pos(feat)
-        net = self.pool(net, dim=-1)
+        net = self.pool(net, dim=-1)  # mean across knn (local feature aggr)
 
         net = self.fc_pos(net)
 
         net = self.block_0(net)
+        # mean across all points (global feature aggr), repeat for each point
         pooled = self.pool(net, dim=-1, keepdim=True).expand(net.size())
         net = torch.cat([net, pooled], dim=1)
 
@@ -172,6 +185,7 @@ class VNN_ResnetPointnet(nn.Module):
         net = self.block_4(net)
 
         # Recude to  B x F
+        # final mean across all points, get overall PC feature
         net = self.pool(net, dim=-1)
 
         c = self.fc_c(self.actvn_c(net))
@@ -207,12 +221,13 @@ class DecoderInner(nn.Module):
                  hidden_size=128, leaky=False, return_features=False, sigmoid=True, acts='all'):
         super().__init__()
         self.z_dim = z_dim
-        self.c_dim = c_dim
+        self.c_dim = c_dim  # actually 0
 
         self.acts = acts
         if self.acts not in ['all', 'inp', 'first_rn', 'inp_first_rn']:
             #self.acts = 'all'
-            raise ValueError('Please provide "acts" equal to one of the following: "all", "inp", "first_rn", "inp_first_rn"')
+            raise ValueError(
+                'Please provide "acts" equal to one of the following: "all", "inp", "first_rn", "inp_first_rn"')
 
         # Submodules
         if z_dim > 0:
@@ -220,7 +235,7 @@ class DecoderInner(nn.Module):
         if c_dim > 0:
             self.c_in = VNLinear(c_dim, c_dim)
 
-        self.fc_in = nn.Linear(z_dim*2+c_dim*2+1, hidden_size)
+        self.fc_in = nn.Linear(z_dim * 2 + c_dim * 2 + 1, hidden_size)
 
         self.block0 = ResnetBlockFC(hidden_size)
         self.block1 = ResnetBlockFC(hidden_size)
@@ -229,6 +244,8 @@ class DecoderInner(nn.Module):
         self.block4 = ResnetBlockFC(hidden_size)
         self.return_features = return_features
 
+        # Final classification linear layer, map to 1 class to predict
+        # binary occupancy for each of the input query points
         self.fc_out = nn.Linear(hidden_size, 1)
         self.sigmoid = sigmoid
 
@@ -238,6 +255,10 @@ class DecoderInner(nn.Module):
             self.actvn = lambda x: F.leaky_relu(x, 0.2)
 
     def forward(self, p, z, c=None, **kwargs):
+        """
+        p: query points (B x N x 3)
+        output: occupancy prediction (B x N)
+        """
         batch_size, T, D = p.size()
         acts = []
         acts_inp = []
@@ -247,10 +268,12 @@ class DecoderInner(nn.Module):
         if isinstance(c, tuple):
             c, c_meta = c
 
-        net = (p * p).sum(2, keepdim=True)
+        net = (p * p).sum(2, keepdim=True)  # sq 2-norm of query points
 
         if self.z_dim != 0:
             z = z.view(batch_size, -1, D).contiguous()
+            # dot-prod btwn each point and z dim over the XYZ dim
+            # net_z: torch.Size([B, N, z_dim])
             net_z = torch.einsum('bmi,bni->bmn', p, z)
             z_dir = self.z_in(z)
             z_inv = (z * z_dir).sum(-1).unsqueeze(1).repeat(1, T, 1)
@@ -830,4 +853,3 @@ class CBatchNorm1d_legacy(nn.Module):
         out = gamma * net + beta
 
         return out
-

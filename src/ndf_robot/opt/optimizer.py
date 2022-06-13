@@ -11,7 +11,6 @@ from airobot import log_info, log_warn, log_debug, log_critical
 from ndf_robot.utils import util, torch_util, trimesh_util, torch3d_util
 from ndf_robot.utils.plotly_save import plot3d
 
-
 class OccNetOptimizer:
     def __init__(self, model, query_pts, query_pts_real_shape=None, opt_iterations=250, 
                  noise_scale=0.0, noise_decay=0.5, single_object=False):
@@ -24,10 +23,7 @@ class OccNetOptimizer:
             self.query_pts_origin_real_shape = query_pts_real_shape
 
         self.loss_fn =  torch.nn.L1Loss()
-        if torch.cuda.is_available():
-            self.dev = torch.device('cuda:0')
-        else:
-            self.dev = torch.device('cpu')
+        self.dev = util.DEVICE
 
         if self.model is not None:
             self.model = self.model.to(self.dev)

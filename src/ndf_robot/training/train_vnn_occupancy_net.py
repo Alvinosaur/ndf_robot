@@ -5,18 +5,18 @@ import configargparse
 import torch
 from torch.utils.data import DataLoader
 
-import ndf_robot.model.vnn_occupancy_net_pointnet_dgcnn as vnn_occupancy_network
+# import ndf_robot.model.vnn_occupancy_net_pointnet_dgcnn as vnn_occupancy_network
+import ndf_robot.model.vnn_object_pursuit as vnn_object_pursuit
 from ndf_robot.training import summaries, losses, training, dataio, config
 from ndf_robot.utils import path_util
+import ndf_robot.utils.util as util
 
 p = configargparse.ArgumentParser()
-p.add('-c', '--config_filepath', required=False,
+p.add_argument('-c', '--config_filepath', required=False,
       is_config_file=True, help='Path to config file.')
 
 p.add_argument('--logging_root', type=str, default=osp.join(
     path_util.get_ndf_model_weights(), 'ndf_vnn'), help='root for logging')
-p.add_argument('--obj_class', type=str, required=True,
-               help='bottle, mug, bowl, all')
 p.add_argument('--experiment_name', type=str, required=True,
                help='Name of subdirectory in logging_root where summaries and checkpoints will be saved.')
 
@@ -46,10 +46,12 @@ p.add_argument('--dgcnn', action='store_true',
                help='If you want to use a DGCNN encoder instead of pointnet (requires more GPU memory)')
 opt = p.parse_args()
 
+OBJ_CLASS = "all"
+objects = ["bottle", "mug", "bowl"]
 train_dataset = dataio.JointOccTrainDataset(
-    128, depth_aug=opt.depth_aug, multiview_aug=opt.multiview_aug, obj_class=opt.obj_class)
+    128, depth_aug=opt.depth_aug, multiview_aug=opt.multiview_aug, obj_class=OBJ_CLASS)
 val_dataset = dataio.JointOccTrainDataset(
-    128, phase='val', depth_aug=opt.depth_aug, multiview_aug=opt.multiview_aug, obj_class=opt.obj_class)
+    128, phase='val', depth_aug=opt.depth_aug, multiview_aug=opt.multiview_aug, obj_class=OBJ_CLASS)
 
 
 train_dataloader = DataLoader(train_dataset, batch_size=opt.batch_size, shuffle=True,
@@ -57,13 +59,12 @@ train_dataloader = DataLoader(train_dataset, batch_size=opt.batch_size, shuffle=
 val_dataloader = DataLoader(val_dataset, batch_size=opt.batch_size, shuffle=True,
                             drop_last=True, num_workers=4)
 
-model = vnn_occupancy_network.VNNOccNet(latent_dim=256).to(util.DEVICE)
-
+# model = vnn_occupancy_network.VNNOccNet(latent_dim=256).to(util.DEVICE)
+model = vnn_object_pursuit.VNNOccNet_Pretrain_OP(
+    num_objects=len(objects), obj_feat_dim=128,
+    latent_dim=256).to(util.DEVICE)
 if opt.checkpoint_path is not None:
     model.load_state_dict(torch.load(opt.checkpoint_path))
-
-# model_parallel = nn.DataParallel(model, device_ids=[0, 1, 2, 3])
-model_parallel = model
 
 # Define the loss
 root_path = os.path.join(opt.logging_root, opt.experiment_name)
@@ -73,7 +74,7 @@ summary_fn = summaries.occupancy_net
 root_path = os.path.join(opt.logging_root, opt.experiment_name)
 loss_fn = val_loss_fn = losses.occupancy_net
 
-training.train(model=model_parallel, train_dataloader=train_dataloader, val_dataloader=val_dataloader, epochs=opt.num_epochs,
-               lr=opt.lr, steps_til_summary=opt.steps_til_summary, epochs_til_checkpoint=opt.epochs_til_ckpt,
-               model_dir=root_path, loss_fn=loss_fn, iters_til_checkpoint=opt.iters_til_ckpt, summary_fn=summary_fn,
-               clip_grad=False, val_loss_fn=val_loss_fn, overwrite=True)
+training.train(
+        model=model, train_dataloader=train_dataloader, val_dataloader=val_dataloader, epochs=opt.num_epochs,
+        lr=opt.lr, loss_fn=loss_fn, summary_fn=summary_fn,
+        clip_grad=False, val_loss_fn=val_loss_fn, base_epoch=base_epoch, object_name=obj, writer=writer, steps_per_val=opt.steps_per_val, checkpoints_dir=checkpoints_dir, base_step=base_step, log_file=log_file)

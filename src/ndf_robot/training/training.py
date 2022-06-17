@@ -11,7 +11,8 @@ import shutil
 from collections import defaultdict
 import torch.distributed as dist
 
-import ndf_robot.training.util as util
+import ndf_robot.training.util as train_util
+import ndf_robot.utils.util as util
 
 
 def average_gradients(model):
@@ -75,7 +76,7 @@ def eval_model(model, dataloader, loss_fn, batches_per_validation,
     return val_loss
 
 
-def train_single_object(model, train_dataloader, epochs, lr, loss_fn, object_name, writer, log_file,
+def train(model, train_dataloader, epochs, lr, loss_fn, object_name, writer, log_file,
                         summary_fn, steps_per_val, val_dataloader, val_loss_fn, checkpoints_dir, clip_grad=False, batches_per_validation=10, max_steps=np.Inf, base_epoch=0, base_step=0):
 
     optimizer = torch.optim.Adam(lr=lr, params=model.parameters())
@@ -185,10 +186,10 @@ def train_feature(model, train_dataloader, corr_model, epochs, lr, steps_til_sum
         os.makedirs(model_dir)
 
         summaries_dir = os.path.join(model_dir, 'summaries')
-        util.cond_mkdir(summaries_dir)
+        train_util.cond_mkdir(summaries_dir)
 
         checkpoints_dir = os.path.join(model_dir, 'checkpoints')
-        util.cond_mkdir(checkpoints_dir)
+        train_util.cond_mkdir(checkpoints_dir)
 
         writer = SummaryWriter(summaries_dir)
 

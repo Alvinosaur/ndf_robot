@@ -4,7 +4,6 @@ import math
 import numpy as np
 import torch
 from glob import glob
-import collections
 
 import cv2
 import torch.nn.functional as F
@@ -169,13 +168,6 @@ def custom_save(model, path, discriminator=None, optimizer=None):
         whole_dict.update({'optimizer': optimizer.state_dict()})
 
     torch.save(whole_dict, path)
-
-
-def dict_to_gpu(ob):
-    if isinstance(ob, collections.Mapping):
-        return {k: dict_to_gpu(v) for k, v in ob.items()}
-    else:
-        return ob.to(DEVICE)
 
 
 def transform_pcd(pcd, transform):

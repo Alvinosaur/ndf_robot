@@ -8,6 +8,7 @@ from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Slerp
 import math
 import torch
+import collections
 
 
 class AttrDict(dict):
@@ -16,11 +17,18 @@ class AttrDict(dict):
 
 
 cuda = torch.cuda.is_available()
-DEVICE = "cuda:1" if cuda else "cpu"
+DEVICE = "cuda:0" if cuda else "cpu"
 if cuda:
     print("CUDA GPU!")
 else:
     print("CPU!")
+
+
+def dict_to_gpu(ob):
+    if isinstance(ob, collections.Mapping):
+        return {k: dict_to_gpu(v) for k, v in ob.items()}
+    else:
+        return ob.to(DEVICE)
 
 
 def write_log(log_file, string):

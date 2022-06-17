@@ -152,12 +152,7 @@ class VNN_ResnetPointnet(nn.Module):
         elif meta_output == 'equivariant_latent_linear':
             self.vn_inv = VNLinear(c_dim, 3)
 
-    def forward(self, p):
-        batch_size = p.size(0)
-        p = p.unsqueeze(1).transpose(2, 3)
-        #mean = get_graph_mean(p, k=self.k)
-        #mean = p_trans.mean(dim=-1, keepdim=True).expand(p_trans.size())
-
+    def forward_backbone(self, p):
         # feat: torch.Size([32, 3(feat dim), 3(x y z), 1000, 20(knn)])
         feat = get_graph_feature_cross(p, k=self.k)
         net = self.conv_pos(feat)
@@ -188,7 +183,19 @@ class VNN_ResnetPointnet(nn.Module):
         # final mean across all points, get overall PC feature
         net = self.pool(net, dim=-1)
 
-        c = self.fc_c(self.actvn_c(net))
+        net = self.actvn_c(net)
+
+        return net
+
+    def forward(self, p):
+        batch_size = p.size(0)
+        p = p.unsqueeze(1).transpose(2, 3)
+        #mean = get_graph_mean(p, k=self.k)
+        #mean = p_trans.mean(dim=-1, keepdim=True).expand(p_trans.size())
+
+        net = self.forward_backbone(p)
+
+        c = self.fc_c(net)
 
         if self.meta_output == 'invariant_latent':
             c_std, z0 = self.std_feature(c)
@@ -254,11 +261,7 @@ class DecoderInner(nn.Module):
         else:
             self.actvn = lambda x: F.leaky_relu(x, 0.2)
 
-    def forward(self, p, z, c=None, **kwargs):
-        """
-        p: query points (B x N x 3)
-        output: occupancy prediction (B x N)
-        """
+    def forward_backbone(self, p, z, c)
         batch_size, T, D = p.size()
         acts = []
         acts_inp = []
@@ -309,14 +312,31 @@ class DecoderInner(nn.Module):
         net = self.block4(net)
         last_act = net
         acts.append(net)
+        net = self.actvn(net)
 
-        out = self.fc_out(self.actvn(net))
+        activations = (acts, acts_inp, acts_first_rn,
+                       acts_inp_first_rn, last_act)
+        if self.return_features:
+            return net, activations
+        else:
+            return net, None
+
+    def forward(self, p, z, c=None, **kwargs):
+        """
+        p: query points (B x N x 3)
+        output: occupancy prediction (B x N)
+        """
+
+        net, activations = self.forward_backbone(p, z, c)
+
+        out = self.fc_out(net)
         out = out.squeeze(-1)
 
         if self.sigmoid:
             out = F.sigmoid(out)
 
         if self.return_features:
+            (acts, acts_inp, acts_first_rn, acts_inp_first_rn, last_act) = activations
             #acts = torch.cat(acts, dim=-1)
             if self.acts == 'all':
                 acts = torch.cat(acts, dim=-1)

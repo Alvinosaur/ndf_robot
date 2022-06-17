@@ -9,9 +9,13 @@ import pickle
 
 from ndf_robot.utils import path_util, geometry
 
+MUG_IDX = 0
+BOTTLE_IDX = 1
+BOWL_IDX = 2
+
 
 class JointOccTrainDataset(Dataset):
-    def __init__(self, sidelength, depth_aug=False, multiview_aug=False, phase='train', obj_class='all'):
+    def __init__(self, sidelength, depth_aug=False, multiview_aug=False, phase='train', obj_class='all', train_prop=0.9):
 
         # Path setup (change to folder where your training data is kept)
         # these are the names of the full dataset folders
@@ -29,22 +33,28 @@ class JointOccTrainDataset(Dataset):
 
         if obj_class == 'all':
             paths = [mug_path, bottle_path, bowl_path]
+            obj_idxs_tmp = [MUG_IDX, BOTTLE_IDX, BOWL_IDX]
         else:
             paths = []
+            obj_idxs_tmp = []
             if 'mug' in obj_class:
                 paths.append(mug_path)
+                obj_idxs_tmp.append(MUG_IDX)
             if 'bowl' in obj_class:
                 paths.append(bowl_path)
+                obj_idxs_tmp.append(BOWL_IDX)
             if 'bottle' in obj_class:
                 paths.append(bottle_path)
+                obj_idxs_tmp.append(BOTTLE_IDX)
 
         print('Loading from paths: ', paths)
 
         files_total = []
-        for path in paths:
+        obj_idxs_total = []
+        for obj_idx, path in zip(obj_idxs_tmp, paths):
             files = list(sorted(glob.glob(path + "/*.npz")))
             n = len(files)
-            idx = int(0.9 * n)
+            idx = int(train_prop * n)
 
             if phase == 'train':
                 files = files[:idx]
@@ -52,8 +62,10 @@ class JointOccTrainDataset(Dataset):
                 files = files[idx:]
 
             files_total.extend(files)
+            obj_idxs_total.extend([obj_idx] * len(files))
 
         self.files = files_total
+        self.obj_idxs = obj_idxs_total
 
         self.sidelength = sidelength
         self.depth_aug = depth_aug
@@ -88,6 +100,7 @@ class JointOccTrainDataset(Dataset):
     def get_item(self, index):
         try:
             data = np.load(self.files[index], allow_pickle=True)
+            obj_idx = self.obj_idxs[index]
             # legacy naming, used to use pose expressed in camera frame. global reference frame doesn't matter though
             posecam = data['object_pose_cam_frame']
 
@@ -234,7 +247,9 @@ class JointOccTrainDataset(Dataset):
             res = {'point_cloud': point_cloud.float(),
                    'coords': coord.float(),
                    'intrinsics': intrinsics.float(),
-                   'cam_poses': np.zeros(1)}  # cam poses not used
+                   'cam_poses': np.zeros(1),
+                   'obj_idxs': np.array(obj_idx),
+                   'fname': [self.files[index]]}  # cam poses not used
             return res, {'occ': torch.from_numpy(labels).float()}
 
         except Exception as e:

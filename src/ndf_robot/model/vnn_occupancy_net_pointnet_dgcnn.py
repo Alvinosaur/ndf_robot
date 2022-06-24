@@ -261,7 +261,7 @@ class DecoderInner(nn.Module):
         else:
             self.actvn = lambda x: F.leaky_relu(x, 0.2)
 
-    def forward_backbone(self, p, z, c)
+    def forward_backbone(self, p, z, c):
         batch_size, T, D = p.size()
         acts = []
         acts_inp = []

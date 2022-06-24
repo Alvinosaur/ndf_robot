@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from ndf_robot.model.layers_equi import *
 from ndf_robot.model.vnn_occupancy_net_pointnet_dgcnn import maxpool, meanpool, ResnetBlockFC, \
     VNNOccNet, VNN_ResnetPointnet, DecoderInner
+from itertools import chain
 
 
 class VNNOccNet_Pretrain_OP(VNNOccNet):
@@ -84,6 +85,11 @@ class VNNOccNet_Pursuit_OP(VNNOccNet_Pretrain_OP):
     def hypernet(self):
         return [self.encoder.hypernet_weight_block,
                 self.decoder.hypernet_weight_block]
+
+    @property
+    def hypernet_parameters(self):
+        return chain(self.encoder.hypernet_weight_block.parameters(),
+                     self.decoder.hypernet_weight_block.parameters())
 
     def load_hypernet(self, hypernet_state_dict):
         self.encoder.hypernet_weight_block.load_state_dict(
@@ -229,10 +235,10 @@ class VNN_ResnetPointnet_Pursuit_OP(VNN_ResnetPointnet_Pretrain_OP):
 
     def forward(self, p, obj_feats):
         B = p.size(0)
+        assert obj_feats.shape[0] == B
         p = p.unsqueeze(1).transpose(2, 3)
 
         net = self.forward_backbone(p)
-
         w = self.hypernet_weight_block(obj_feats).view(
             B, self.hidden_dim, self.c_dim)
         c = apply_linear_VN_batch(net, w)

@@ -1,0 +1,14 @@
+Saving pretrained obj feat of: bowl
+[checkpoint] pursuit round 0 has been saved to src/ndf_robot/model_weights/ndf_vnn/ndf_multi_pretraining/checkpoints/pursuit_checkpoints/checkpoint_round_0
+
+=============================start new object==============================
+Starting new object: bottle
+            round:               0
+            current base num:    1
+            object index:        1
+            output obj dir:      src/ndf_robot/model_weights/ndf_vnn/ndf_multi_pretraining/checkpoints/pursuit_checkpoints/explored_objects/obj_1
+        
+Obj feat idxs and their losses: [(0, 0.12876243889331818)]
+Current object bottle is novel, min loss: 0.12876243889331818, most similiar object: 0, start object pursuit
+start coefficient pursuit (first check):
+coeff pursuit result dir: src/ndf_robot/model_weights/ndf_vnn/ndf_multi_pretraining/checkpoints/pursuit_checkpoints/explored_objects/obj_1/coeff_pursuit

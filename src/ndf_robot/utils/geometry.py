@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 from torch.nn import functional as F
-import util
+import ndf_robot.training.util as util
 
 
 def compute_normal_map(x_img, y_img, z, intrinsics):
@@ -32,7 +32,8 @@ def get_ray_directions_cam(uv, intrinsics):
     y_cam = uv[:, :, 1].view(batch_size, -1)
     z_cam = torch.ones((batch_size, num_samples)).cuda()
 
-    pixel_points_cam = lift(x_cam, y_cam, z_cam, intrinsics=intrinsics, homogeneous=False)  # (batch_size, -1, 4)
+    pixel_points_cam = lift(x_cam, y_cam, z_cam, intrinsics=intrinsics,
+                            homogeneous=False)  # (batch_size, -1, 4)
     ray_dirs = F.normalize(pixel_points_cam, dim=2)
     return ray_dirs
 
@@ -111,21 +112,25 @@ def world_from_xy_depth(xy, depth, cam2world, intrinsics):
     y_cam = xy[:, :, 1].view(batch_size, -1)
     z_cam = depth.view(batch_size, -1)
 
-    pixel_points_cam = lift(x_cam, y_cam, z_cam, intrinsics=intrinsics, homogeneous=True)  # (batch_size, -1, 4)
+    pixel_points_cam = lift(
+        x_cam, y_cam, z_cam, intrinsics=intrinsics, homogeneous=True)  # (batch_size, -1, 4)
 
     # permute for batch matrix product
     pixel_points_cam = pixel_points_cam.permute(0, 2, 1)
 
-    world_coords = torch.bmm(cam2world, pixel_points_cam).permute(0, 2, 1)[:, :, :3]  # (batch_size, -1, 3)
+    world_coords = torch.bmm(cam2world, pixel_points_cam).permute(0, 2, 1)[
+        :, :, :3]  # (batch_size, -1, 3)
 
     return world_coords
 
 
 def project_point_on_line(projection_point, line_direction, point_on_line, dim):
     '''Projects a batch of points on a batch of lines as defined by their direction and a point on each line. '''
-    assert torch.allclose((line_direction ** 2).sum(dim=dim, keepdim=True).cuda(), torch.Tensor([1]).cuda())
+    assert torch.allclose((line_direction ** 2).sum(dim=dim,
+                          keepdim=True).cuda(), torch.Tensor([1]).cuda())
     return point_on_line + ((projection_point - point_on_line) * line_direction).sum(dim=dim,
                                                                                      keepdim=True) * line_direction
+
 
 def get_ray_directions(xy, cam2world, intrinsics):
     '''Translates meshgrid of xy pixel coordinates to normalized directions of rays through these pixels.
@@ -133,7 +138,8 @@ def get_ray_directions(xy, cam2world, intrinsics):
     batch_size, num_samples, _ = xy.shape
 
     z_cam = torch.ones((batch_size, num_samples)).cuda()
-    pixel_points = world_from_xy_depth(xy, z_cam, intrinsics=intrinsics, cam2world=cam2world)  # (batch, num_samples, 3)
+    pixel_points = world_from_xy_depth(
+        xy, z_cam, intrinsics=intrinsics, cam2world=cam2world)  # (batch, num_samples, 3)
 
     cam_pos = cam2world[:, :3, 3]
     ray_dirs = pixel_points - cam_pos[:, None, :]  # (batch, num_samples, 3)
@@ -150,8 +156,7 @@ def depth_from_world(world_coords, cam2world):
     # permute for bmm
     points_hom = points_hom.permute(0, 2, 1)
 
-    points_cam = torch.inverse(cam2world).bmm(points_hom)  # (batch, 4, num_samples)
+    points_cam = torch.inverse(cam2world).bmm(
+        points_hom)  # (batch, 4, num_samples)
     depth = points_cam[:, 2, :][:, :, None]  # (batch, num_samples, 1)
     return depth
-
-

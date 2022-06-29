@@ -17,7 +17,7 @@ class AttrDict(dict):
 
 
 cuda = torch.cuda.is_available()
-DEVICE = "cuda:0" if cuda else "cpu"
+DEVICE = "cuda:1" if cuda else "cpu"
 if cuda:
     print("CUDA GPU!")
 else:
@@ -27,8 +27,10 @@ else:
 def dict_to_gpu(ob):
     if isinstance(ob, collections.Mapping):
         return {k: dict_to_gpu(v) for k, v in ob.items()}
-    else:
+    elif isinstance(ob, torch.Tensor):
         return ob.to(DEVICE)
+    else:
+        return ob
 
 
 def write_log(log_file, string):

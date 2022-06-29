@@ -1,4 +1,6 @@
 import os
+import random
+import re
 import torch
 import torch.nn as nn
 
@@ -51,13 +53,13 @@ def semantic(model_outputs, ground_truth, val=False):
 class MemoryLoss(nn.Module):
     """The loss function for forgetting prevention"""
 
-    def __init__(self, Base_dir, device):
+    def __init__(self, z_dir, device):
         super(MemoryLoss, self).__init__()
-        assert(os.path.isdir(Base_dir))
-        self.Base_dir = Base_dir
+        assert(os.path.isdir(z_dir))
+        self.z_dir = z_dir
         self.device = device
-        self.file_list = [os.path.join(Base_dir, file) for file in os.listdir(
-            Base_dir) if file.endswith(".json")]
+        self.file_list = [f for f in os.listdir(
+            z_dir) if re.match(r'z_\d+.pth', f)]
         # preload
         self._preload(self.file_list)
 
@@ -65,29 +67,37 @@ class MemoryLoss(nn.Module):
         print("preload from ", file_list)
         self.z_enc = []
         self.z_dec = []
-        self.weights_enc = []
-        self.weights_dec = []
+        self.hyper_enc = []
+        self.hyper_dec = []
         for file in file_list:
-            records = torch.load(file, map_location=self.device)
+            records = torch.load(os.path.join(self.z_dir, file),
+                                 map_location=self.device)
             self.z_enc.append(records['z_enc'])
             self.z_dec.append(records['z_dec'])
-            self.weights_enc.append(records['weights_enc'])
-            self.weights_dec.append(records['weights_dec'])
+            self.hyper_enc.append(records['hyper_enc'])
+            self.hyper_dec.append(records['hyper_dec'])
 
-    def _l2_loss(self, pred, gt, coeff=1.0):
-        for param in gt:
-            loss = coeff * torch.norm(pred[param] - gt[param])
-            # TODO: backward() in a forward() is not a regular way. We do it in this way to prevent CUDA memory overflow, by releasing the computational graph immediately.
-            loss.backward()
+    def _l2_loss(self, pred_hyper_enc, pred_hyper_dec, gt_hyper_enc, gt_hyper_dec, coeff=1.0):
+        loss = coeff * (
+            torch.norm(pred_hyper_enc - gt_hyper_enc) +
+            torch.norm(pred_hyper_dec - gt_hyper_dec)) / 2
+        # TODO: backward() in a forward() is not a regular way. We do it in this way to prevent CUDA memory overflow, by releasing the computational graph immediately.
+        loss.backward()
+        print("mem loss: ", loss.item())
 
-    def forward(self, hypernet, mem_coeff):
-        index_list = range(len(self.z))
+    def forward(self, model, mem_coeff):
+        index_list = range(len(self.z_enc))
         if len(index_list) > 10:
             sample_len = int(0.2 * len(index_list))
         else:
             sample_len = len(index_list)
         index_list = random.sample(index_list, sample_len)
         for i in index_list:
-            pred_w = hypernet(self.z[i])
-            gt_w = self.weights[i]
-            self._l2_loss(pred_w, gt_w, mem_coeff)
+            pred_hyper_enc, pred_hyper_dec = model.get_hypernet_weights(
+                self.z_enc[i], self.z_dec[i])
+            gt_hyper_enc = self.hyper_enc[i]
+            gt_hyper_dec = self.hyper_dec[i]
+            self._l2_loss(pred_hyper_enc=pred_hyper_enc,
+                          pred_hyper_dec=pred_hyper_dec, gt_hyper_enc=gt_hyper_enc,
+                          gt_hyper_dec=gt_hyper_dec,
+                          coeff=mem_coeff)

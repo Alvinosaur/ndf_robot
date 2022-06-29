@@ -1,0 +1,9 @@
+Starting training:
+        Max steps:      80
+        Batch size:      32
+        Learning rate:   0.0004
+        Checkpoints:     src/ndf_robot/model_weights/ndf_vnn/ndf_multi_pretraining/checkpoints/pursuit_checkpoints/explored_objects/obj_7/coeff_check_dir1
+        z_dir:           src/ndf_robot/model_weights/ndf_vnn/ndf_multi_pretraining/checkpoints/pursuit_checkpoints/zs
+        loss thresh:     0.12
+    
+Finished training. Init loss: 0.5284419655799866, min loss: 0.21782734990119934, thresh: 0.12

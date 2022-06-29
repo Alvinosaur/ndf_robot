@@ -97,42 +97,42 @@ class VNNOccNet_Pursuit_OP(VNNOccNet_Pretrain_OP):
         self.decoder.hypernet_weight_block.load_state_dict(
             hypernet_state_dict['decoder_hypernet'])
 
-    def get_hypernet_weights(self, obj_feats_enc, obj_feats_dec):
-        if isinstance(obj_feats_enc, list):
-            obj_feats_enc = torch.stack(obj_feats_enc)
-        if isinstance(obj_feats_dec, list):
-            obj_feats_dec = torch.stack(obj_feats_dec)
-        enc_out = self.encoder.hypernet_weight_block(obj_feats_enc)
-        dec_out = self.decoder.hypernet_weight_block(obj_feats_dec)
+    def get_hypernet_weights(self, enc_feats, dec_feats):
+        if isinstance(enc_feats, list):
+            enc_feats = torch.stack(enc_feats)
+        if isinstance(dec_feats, list):
+            dec_feats = torch.stack(dec_feats)
+        enc_out = self.encoder.hypernet_weight_block(enc_feats)
+        dec_out = self.decoder.hypernet_weight_block(dec_feats)
         return enc_out, dec_out
 
-    def forward(self, input, obj_feats_enc, obj_feats_dec):
+    def forward(self, input, enc_feats, dec_feats):
         out_dict = {}
 
         enc_in = input['point_cloud'] * self.scaling
         query_points = input['coords'] * self.scaling
 
-        z = self.encoder(enc_in, obj_feats_enc)
+        z = self.encoder(enc_in, enc_feats)
 
         if self.return_features:
             out_dict['occ'], out_dict['features'] = self.decoder(
-                query_points, z, obj_feats=obj_feats_dec)
+                query_points, z, obj_feats=dec_feats)
         else:
             out_dict['occ'] = self.decoder(
-                query_points, z, obj_feats=obj_feats_dec)
+                query_points, z, obj_feats=dec_feats)
 
         return out_dict
 
-    def extract_latent(self, input, obj_feats_enc):
+    def extract_latent(self, input, enc_feats):
         enc_in = input['point_cloud'] * self.scaling
-        z = self.encoder(enc_in, obj_feats_enc)
+        z = self.encoder(enc_in, enc_feats)
         return z
 
-    def forward_latent(self, z, coords, obj_feats_dec):
+    def forward_latent(self, z, coords, dec_feats):
         out_dict = {}
         coords = coords * self.scaling
         out_dict['occ'], out_dict['features'] = self.decoder(
-            p=coords, z=z, obj_feats=obj_feats_dec)
+            p=coords, z=z, obj_feats=dec_feats)
 
         return out_dict['features']
 

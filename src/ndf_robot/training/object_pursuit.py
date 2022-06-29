@@ -31,6 +31,23 @@ def unfreeze(modules):
             param.requires_grad = True
 
 
+def save_z(model, enc_feat, dec_feat, log_file, z_dir, z_idx,
+           hyper_enc=None, hyper_dec=None):
+    if hyper_enc is None:
+        hyper_enc, hyper_dec = model.get_hypernet_weights(enc_feat, dec_feat)
+
+    util.write_log(log_file, f"Saving 'z_{z_idx}.pth' to {z_dir}")
+    torch.save(
+        {
+            "z_enc": enc_feat.detach(),
+            "z_dec": dec_feat.detach(),
+            "hyper_enc": hyper_enc.detach(),
+            "hyper_dec": hyper_dec.detach(),
+        },
+        os.path.join(z_dir, f"z_{z_idx}.pth"),
+    )
+
+
 def train_net(model: VNNOccNet_Pursuit_OP,
               train_data,
               val_data,
@@ -47,7 +64,7 @@ def train_net(model: VNNOccNet_Pursuit_OP,
               max_steps=80,
               val_freq=1,
               lr=0.0004,
-              mem_loss_coeff=0.04):
+              mem_loss_coeff=0.02):
     """
 
     coefficients should be passed in as tensor([1.0]) if not being trained (ie: learning a new z basis)
@@ -66,10 +83,7 @@ def train_net(model: VNNOccNet_Pursuit_OP,
 
     # Only use singlenet when training hypernetwork since learning new object basis... couldn't represent using existing bases
     if train_hypernet:
-        import ipdb
-        ipdb.set_trace()  # TODO: save old hypernet inputs and outputs, use for regularziation
-        MemLoss = MemoryLoss(Base_dir=z_dir, device=util.DEVICE)
-        mem_coeff = mem_loss_coeff
+        MemLoss = MemoryLoss(z_dir=z_dir, device=util.DEVICE)
 
     # write info
     info_text = f"""Starting training:
@@ -98,15 +112,6 @@ def train_net(model: VNNOccNet_Pursuit_OP,
             enc_coeffs.view(-1, 1) * enc_feats, dim=0)
         weighted_dec_feat = torch.sum(
             dec_coeffs.view(-1, 1) * dec_feats, dim=0)
-        save_dict = {
-            'enc_coeffs': enc_coeffs.clone(),
-            'dec_coeffs': dec_coeffs.clone(),
-            'enc_feats': enc_feats.clone(),
-            'dec_feats': dec_feats.clone(),
-            'weighted_enc_feat': weighted_enc_feat.clone(),
-            'weighted_dec_feat': weighted_dec_feat.clone(),
-            'hypernet': copy.deepcopy(model.hypernet_state_dict),
-        }
 
         enc_feat_repeat = weighted_enc_feat.unsqueeze(
             0).repeat(batch_size, 1)
@@ -114,8 +119,8 @@ def train_net(model: VNNOccNet_Pursuit_OP,
             0).repeat(batch_size, 1)
 
         train_output = model(train_input,
-                             obj_feats_enc=enc_feat_repeat,
-                             obj_feats_dec=dec_feat_repeat)
+                             enc_feats=enc_feat_repeat,
+                             dec_feats=dec_feat_repeat)
 
         train_loss = loss_fn(train_output, train_gt)['occ']
 
@@ -123,7 +128,7 @@ def train_net(model: VNNOccNet_Pursuit_OP,
         optimizer.zero_grad()
         train_loss.backward()
         if train_hypernet:
-            MemLoss(model, mem_coeff)
+            MemLoss(model, mem_loss_coeff)
 
         # NOTE: removed gradient clipping!
         # nn.utils.clip_grad_value_(optim_param, 0.1)
@@ -134,14 +139,23 @@ def train_net(model: VNNOccNet_Pursuit_OP,
             model.eval()
             with torch.no_grad():
                 val_output = model(val_input,
-                                   obj_feats_enc=enc_feat_repeat,
-                                   obj_feats_dec=dec_feat_repeat)
+                                   enc_feats=enc_feat_repeat,
+                                   dec_feats=dec_feat_repeat)
                 val_loss = loss_fn(val_output, val_gt)['occ'].item()
             model.train()
+            print("   val loss:", val_loss)
 
         if val_loss < min_loss:
             # save coeffs, weighted enc/dec feats, original enc/dec feats and hypernet
-            torch.save(save_dict, os.path.join(log_dir, "weights.pth"))
+            save_dict = {
+                'enc_coeffs': enc_coeffs.clone(),
+                'dec_coeffs': dec_coeffs.clone(),
+                'enc_feats': enc_feats.clone(),
+                'dec_feats': dec_feats.clone(),
+                'weighted_enc_feat': weighted_enc_feat.clone(),
+                'weighted_dec_feat': weighted_dec_feat.clone(),
+                'hypernet': copy.deepcopy(model.hypernet_state_dict),
+            }
             min_loss = val_loss
 
         if init_loss is None:
@@ -150,6 +164,7 @@ def train_net(model: VNNOccNet_Pursuit_OP,
         if min_loss < express_threshold:
             break
 
+    torch.save(save_dict, os.path.join(log_dir, "weights.pth"))
     model.eval()
     util.write_log(
         log_file, f"Finished training. Init loss: {init_loss}, min loss: {min_loss}, thresh: {express_threshold}")
@@ -157,7 +172,7 @@ def train_net(model: VNNOccNet_Pursuit_OP,
     return min_loss < express_threshold, min_loss
 
 
-def have_seen(model, batch_data, obj_feats_enc, obj_feats_dec, loss_fn, threshold, batch_size):
+def have_seen(model, batch_data, enc_feats, dec_feats, loss_fn, threshold, batch_size):
     """
     Checks each existing basis z to see if it represents
     new object well (low segmentation loss)
@@ -174,10 +189,10 @@ def have_seen(model, batch_data, obj_feats_enc, obj_feats_dec, loss_fn, threshol
     feat_loss_pairs = []
     min_loss = 1e10
     best_feat = best_idx = None
-    for feat_idx, (enc_feat, dec_feat) in enumerate(zip(obj_feats_enc, obj_feats_dec)):
+    for feat_idx, (enc_feat, dec_feat) in enumerate(zip(enc_feats, dec_feats)):
         with torch.no_grad():
             model_output = model(model_input,
-                                 obj_feats_enc=enc_feat.unsqueeze(0).repeat(batch_size, 1), obj_feats_dec=dec_feat.unsqueeze(0).repeat(batch_size, 1))
+                                 enc_feats=enc_feat.view(1, -1).repeat(batch_size, 1), dec_feats=dec_feat.view(1, -1).repeat(batch_size, 1))
             loss = loss_fn(model_output, gt, val=True)['occ'].item()
         all_loss.append(loss)
         feat_loss_pairs.append((feat_idx, loss))
@@ -186,24 +201,7 @@ def have_seen(model, batch_data, obj_feats_enc, obj_feats_dec, loss_fn, threshol
             best_feat = (enc_feat, dec_feat)
             best_idx = feat_idx
 
-    return loss < threshold, min_loss, best_idx, best_feat, feat_loss_pairs
-
-
-def save_z(model, enc_feat, dec_feat, log_file, z_dir, z_idx,
-           hyper_enc=None, hyper_dec=None):
-    if hyper_enc is None:
-        hyper_enc, hyper_dec = model.get_hypernet_weights(enc_feat, dec_feat)
-
-    util.write_log(log_file, f"Saving 'z_{z_idx}.pth' to {z_dir}")
-    torch.save(
-        {
-            "z_enc": enc_feat.detach(),
-            "z_dec": dec_feat.detach(),
-            "weights_enc": hyper_enc.detach(),
-            "weights_dec": hyper_dec.detach(),
-        },
-        os.path.join(z_dir, f"z_{z_idx}.pth"),
-    )
+    return min_loss < threshold, min_loss, best_idx, best_feat, feat_loss_pairs
 
 
 def pursuit(model, objects, args, batch_size, log_file, express_threshold, loss_fn):
@@ -236,24 +234,10 @@ def pursuit(model, objects, args, batch_size, log_file, express_threshold, loss_
         log_file, f"Saving pretrained obj feat of: {objects[rand_feat_idx]}")
     base_feats_enc = [model.encoder.obj_feats[rand_feat_idx]]
     base_feats_dec = [model.decoder.obj_feats[rand_feat_idx]]
-    save_z(model, enc_feat=base_feats_enc[0].unsqueeze(0),
-           dec_feat=base_feats_dec[0].unsqueeze(0),
+    save_z(model, enc_feat=base_feats_enc[0],
+           dec_feat=base_feats_dec[0],
            log_file=log_file, z_dir=z_dir, z_idx=0)
-    init_hyper_enc, init_hyper_dec = (
-        model.get_hypernet_weights(
-            base_feats_enc[0].unsqueeze(0),
-            base_feats_dec[0].unsqueeze(0)))
-    util.write_log(
-        log_file, f"Saving initial basis as 'z_0.pth' to {z_dir}")
-    torch.save(
-        {
-            "z_enc": base_feats_enc[0],
-            "z_dec": base_feats_dec[0],
-            "weights_enc": init_hyper_enc,
-            "weights_dec": init_hyper_dec,
-        },
-        os.path.join(z_dir, f"z_0.pth"),
-    )
+    base_to_obj_counter = [0]
     # obj_counter != num_bases because some novel objects can be expressed
     # as linear combo of existing bases
     obj_counter = 1  # saved one pretrained obj feat
@@ -271,12 +255,10 @@ def pursuit(model, objects, args, batch_size, log_file, express_threshold, loss_
                    drop_last=True, num_workers=6)
         for obj_class_gt_idx in range(n_objects)]
 
-    base_info = []
-    z_info = []
     save_temp_interval = 5
     num_pursuit_steps = 30
     for pursuit_step in range(num_pursuit_steps):
-        num_bases = len(obj_feats_dec)
+        num_bases = len(base_feats_dec)
         # sample random object class
         obj_class_gt_idx = random.randint(0, n_objects - 1)
         obj_class_gt = objects[obj_class_gt_idx]
@@ -290,8 +272,8 @@ def pursuit(model, objects, args, batch_size, log_file, express_threshold, loss_
             train_util.cond_mkdir(temp_checkpoint_dir)
             torch.save(model.hypernet_state_dict, os.path.join(
                 temp_checkpoint_dir, f"hypernet.pth"))
-            torch.save({'obj_feats_enc': obj_feats_enc, 'obj_feats_dec': obj_feats_dec}, os.path.join(
-                temp_checkpoint_dir, "obj_feats.pth"))
+            torch.save({'base_feats_enc': base_feats_enc, 'base_feats_dec': base_feats_dec}, os.path.join(
+                temp_checkpoint_dir, "base_feats.pth"))
             util.write_log(log_file,
                            f"[checkpoint] pursuit round {pursuit_step} has been saved to {temp_checkpoint_dir}")
 
@@ -313,7 +295,7 @@ def pursuit(model, objects, args, batch_size, log_file, express_threshold, loss_
         # ========================================================================================================
         # check if current object has been seen
         seen, loss, best_idx, best_feat, feat_loss_pairs = have_seen(
-            model, batch_data, obj_feats_enc, obj_feats_dec, loss_fn, threshold=express_threshold, batch_size=batch_size)
+            model, batch_data, base_feats_enc, base_feats_dec, loss_fn, threshold=express_threshold, batch_size=batch_size)
 
         util.write_log(
             log_file, f"Obj feat idxs and their losses: {feat_loss_pairs}")
@@ -337,53 +319,52 @@ def pursuit(model, objects, args, batch_size, log_file, express_threshold, loss_
             freeze(model.hypernet)
 
             # rand init new coeffs
-            new_coeffs_enc_v1 = torch.randn(
+            enc_coeffs_v1 = torch.randn(
                 num_bases, device=util.DEVICE, requires_grad=True)
-            new_coeffs_dec_v1 = torch.randn(
+            dec_coeffs_v1 = torch.randn(
                 num_bases, device=util.DEVICE, requires_grad=True)
+            # TODO: if poor performance, remove this
             init_value = 1.0 / np.sqrt(num_bases)
-            nn.init.constant_(new_coeffs_enc_v1, init_value)
-            nn.init.constant_(new_coeffs_dec_v1, init_value)
+            nn.init.constant_(enc_coeffs_v1, init_value)
+            nn.init.constant_(dec_coeffs_v1, init_value)
 
             # create save folder
-            coeff_pursuit_dir = os.path.join(obj_dir, "coeff_pursuit")
-            train_util.cond_mkdir(coeff_pursuit_dir)
+            coeff_check_dir1 = os.path.join(obj_dir, "coeff_check_dir1")
+            train_util.cond_mkdir(coeff_check_dir1)
             util.write_log(
-                log_file, f"coeff pursuit result dir: {coeff_pursuit_dir}")
+                log_file, f"coeff dir v1: {coeff_check_dir1}")
 
             # perform coefficient pursuit
             val_data = next(iter(obj_dataloaders[obj_class_gt_idx]))
             expressable, min_loss = train_net(model,
                                               train_data=batch_data,
                                               val_data=val_data,
-                                              log_dir=coeff_pursuit_dir,
+                                              log_dir=coeff_check_dir1,
                                               train_hypernet=False,
                                               z_dir=z_dir,
                                               loss_fn=loss_fn,
                                               express_threshold=express_threshold,
-                                              enc_coeffs=new_coeffs_enc_v1,
-                                              dec_coeffs=new_coeffs_dec_v1,
+                                              enc_coeffs=enc_coeffs_v1,
+                                              dec_coeffs=dec_coeffs_v1,
                                               enc_feats=torch.stack(
-                                                  obj_feats_enc),
+                                                  base_feats_enc),
                                               dec_feats=torch.stack(
-                                                  obj_feats_dec),
+                                                  base_feats_dec),
                                               batch_size=batch_size,
                                               max_steps=80,
-                                              val_freq=1,
+                                              val_freq=3,
                                               lr=0.0004)
             util.write_log(log_file, f"training stop, min loss: {min_loss}")
         # ==========================================================================================================
         # (train as a new base) if not, train this object as a new base
         # the condition to retrain a new base
-        import ipdb
-        ipdb.set_trace()
         if not expressable:
             util.write_log(
                 log_file, "can't be expressed by bases, start to train as new base:")
 
             # unfreeze hypernet, temporarily save current one
             unfreeze(model.hypernet)
-            temp_hypernet_state_dict = model.hypernet_state_dict
+            temp_hypernet_state_dict = copy.deepcopy(model.hypernet_state_dict)
 
             # create save folder
             base_update_dir = os.path.join(obj_dir, "base_update")
@@ -393,170 +374,143 @@ def pursuit(model, objects, args, batch_size, log_file, express_threshold, loss_
 
             ones_coeff = torch.ones(
                 1, device=util.DEVICE, requires_grad=False)
-            new_obj_base_enc = torch.rand_like(
-                obj_feats_enc[0], device=util.DEVICE).unsqueeze(0)
-            new_obj_base_dec = torch.rand_like(
-                obj_feats_dec[0], device=util.DEVICE).unsqueeze(0)
+            new_base_feats_enc = torch.rand_like(
+                base_feats_enc[0], device=util.DEVICE).unsqueeze(0)
+            new_base_feats_dec = torch.rand_like(
+                base_feats_dec[0], device=util.DEVICE).unsqueeze(0)
+
+            # create save folder
+            new_base_dir = os.path.join(obj_dir, "new_base_dir")
+            train_util.cond_mkdir(new_base_dir)
+            util.write_log(
+                log_file, f"new_base_dir: {new_base_dir}")
 
             # train new hypernets with regularization of not changing output weights given existing bases
             expressable, min_loss = train_net(model,
                                               train_data=batch_data,
                                               val_data=val_data,
-                                              log_dir=coeff_pursuit_dir,
+                                              log_dir=new_base_dir,
                                               train_hypernet=True,
                                               z_dir=z_dir,
                                               loss_fn=loss_fn,
                                               express_threshold=express_threshold,
                                               enc_coeffs=ones_coeff,
                                               dec_coeffs=ones_coeff,
-                                              enc_feats=new_obj_base_enc,
-                                              dec_feats=new_obj_base_dec,
+                                              enc_feats=new_base_feats_enc,
+                                              dec_feats=new_base_feats_dec,
                                               batch_size=batch_size,
                                               max_steps=80,
-                                              val_freq=1,
+                                              val_freq=3,
                                               lr=0.0004)    # type: ignore
             util.write_log(
                 log_file, f"training stop, min loss: {min_loss}")
 
-            # if the object is invalid, reset hypernet/backbone to prev state
+            # # if the object is invalid, reset hypernet/backbone to prev state
+            # if min_loss >= express_threshold:
+            #     util.write_log(
+            #         log_file, f"[Warning] current object {obj_class_gt} is unqualified! The loss {min_loss} should be < {express_threshold}, All records will be removed !")
+
+            #     # TODO: reset backbone too?
+            #     model.load_hypernet(temp_hypernet_state_dict)
+            #     unfreeze(model.hypernet)
+
+            #     shutil.rmtree(obj_dir)
+            #     util.write_log(
+            #         log_file, "\n===============================end object=================================")
+            #     continue
+
+            # If even learning new basis fails, just save it
             if min_loss >= express_threshold:
-                util.write_log(
-                    log_file, f"[Warning] current object {obj_class_gt} is unqualified! The loss {min_loss} should be < {express_threshold}, All records will be removed !")
-
-                # TODO: reset backbone too?
-                model.load_hypernet(temp_hypernet_state_dict)
-                unfreeze(model.hypernet)
-
-                shutil.rmtree(obj_dir)
-                util.write_log(
-                    log_file, "\n===============================end object=================================")
-                continue
+                save_new_basis = True
 
             # ======================================================================================================
             # (second check) check new z can now be approximated (expressed by coeffs) by current bases
-            if num_bases > 0:
+            elif num_bases > 0:
                 util.write_log(
                     log_file, f"start to examine whether the object {obj_counter} can be expressed by bases now (second check):")
                 # freeze the hypernet and backbone
                 freeze(model.hypernet)
 
                 # rand init new coeffs
-                new_coeffs_enc_v2 = torch.randn(
+                coeffs_enc_v2 = torch.randn(
                     num_bases, device=util.DEVICE, requires_grad=True)
-                new_coeffs_dec_v2 = torch.randn(
+                coeffs_dec_v2 = torch.randn(
                     num_bases, device=util.DEVICE, requires_grad=True)
                 init_value = 1.0 / np.sqrt(num_bases)
-                nn.init.constant_(new_coeffs_enc_v2, init_value)
-                nn.init.constant_(new_coeffs_dec_v2, init_value)
+                nn.init.constant_(coeffs_enc_v2, init_value)
+                nn.init.constant_(coeffs_dec_v2, init_value)
 
                 # create save folder
-                check_express_dir = os.path.join(obj_dir, "check_express")
-                train_util.cond_mkdir(check_express_dir)
+                coeff_check_dir2 = os.path.join(obj_dir, "coeff_check_dir2")
+                train_util.cond_mkdir(coeff_check_dir2)
                 util.write_log(
-                    log_file, f"check express result dir: {check_express_dir}")
+                    log_file, f"coeff_check_dir2: {coeff_check_dir2}")
 
-                expressable, min_loss = train_net(
-                    batch_data, model, obj_feats_enc, obj_feats_dec, new_coeffs_enc_v2, new_coeffs_dec_v2, coeff_pursuit_dir, express_threshold)
+                expressable, min_loss = train_net(model,
+                                                  train_data=batch_data,
+                                                  val_data=val_data,
+                                                  log_dir=coeff_check_dir2,
+                                                  z_dir=z_dir,
+                                                  loss_fn=loss_fn,
+                                                  express_threshold=express_threshold,
+                                                  train_hypernet=False,
+                                                  enc_coeffs=coeffs_enc_v2,
+                                                  dec_coeffs=coeffs_dec_v2,
+                                                  enc_feats=torch.stack(
+                                                      base_feats_enc),
+                                                  dec_feats=torch.stack(
+                                                      base_feats_dec),
+                                                  batch_size=batch_size,
+                                                  max_steps=80,
+                                                  val_freq=3,
+                                                  lr=0.0004)    # type: ignore
+                save_new_basis = not expressable
+
             else:
-                expressable = False
+                save_new_basis = True
 
-            if expressable:
+            if not save_new_basis:
                 util.write_log(
-                    log_file, f"new z can be expressed by current bases, redundant! min loss: {min_loss}, don't add it to bases")
+                    log_file, f"new z can be expressed by current bases, redundant! min loss: {min_loss}, don't add new basis to existing bases")
 
                 # save object's coeffs and output hypernet weights
-                linear_combo_obj_feats_enc_v2 = torch.sum(
-                    new_coeffs_enc_v2 * torch.stack(obj_feats_enc), dim=0)
-                linear_combo_obj_feats_dec_v2 = torch.sum(
-                    new_coeffs_dec_v2 * torch.stack(obj_feats_dec), dim=0)
-                new_obj_hyper_enc_v2, new_obj_hyper_dec_v2 = model.get_hypernet_weights(
-                    obj_feats_enc=linear_combo_obj_feats_enc_v2,
-                    obj_feats_dec=linear_combo_obj_feats_dec_v2)
-                util.write_log(
-                    log_file, f"object {obj_counter} pursuit complete, save object z 'z_{'%04d' % obj_counter}.pth' to {z_dir}")
-                torch.save(
-                    {
-                        "z_enc": linear_combo_obj_feats_enc_v2,
-                        "z_dec": linear_combo_obj_feats_dec_v2,
-                        "weights_enc": new_obj_hyper_enc_v2,
-                        "weights_dec": new_obj_hyper_dec_v2
-                    },
-                    os.path.join(z_dir, f"z_{'%04d' % obj_counter}.pth"),
-                )
+                lin_enc_feats_v2 = torch.sum(
+                    coeffs_enc_v2 * torch.stack(base_feats_enc), dim=0)
+                lin_dec_feats_v2 = torch.sum(
+                    coeffs_dec_v2 * torch.stack(base_feats_dec), dim=0)
+                save_z(model, enc_feat=lin_enc_feats_v2,
+                       dec_feat=lin_dec_feats_v2,
+                       log_file=log_file, z_dir=z_dir, z_idx=obj_counter)
 
             else:
                 # save z as a new base
                 # NOTE: Since hypernetwork has been updated, shouldn't z_net also be updated again?
-                new_obj_hyper_enc_v2, new_obj_hyper_dec_v2 = model.get_hypernet_weights(
-                    obj_feats_enc=new_obj_base_enc,
-                    obj_feats_dec=new_obj_base_dec)
-                util.write_log(
-                    log_file, f"new z can't be expressed by current bases, not redundant! express min_loss: {min_loss}, add 'base_{'%04d' % num_bases}.pth' to bases")
-                torch.save(
-                    {
-                        "z_enc": new_obj_base_enc,
-                        "z_dec": new_obj_base_dec,
-                        "weights_enc": new_obj_hyper_enc_v2,
-                        "weights_dec": new_obj_hyper_dec_v2
-                    },
-                    os.path.join(z_dir, f"base_{'%04d' % obj_counter}.pth"),
-                )
-
-                # record base info
-                base_info.append({
-                    "index": obj_counter,
-                    "base_file": f"base_{'%04d' % num_bases}.pth",
-                    "z_file": f"z_{'%04d' % obj_counter}.pth"
-                })
-
-                # save object's z
-                util.write_log(
-                    log_file, f"object {obj_counter} pursuit complete, save object z 'z_{'%04d' % obj_counter}.pth' to {z_dir}")
-                torch.save(
-                    {
-                        "z_enc": new_obj_base_enc,
-                        "z_dec": new_obj_base_dec,
-                        "weights_enc": new_obj_hyper_enc,
-                        "weights_dec": new_obj_hyper_dec
-                    },
-                    os.path.join(z_dir, f"z_{'%04d' % obj_counter}.pth"),
-                )
+                base_feats_enc.append(new_base_feats_enc.flatten())
+                base_feats_dec.append(new_base_feats_dec.flatten())
+                base_to_obj_counter.append(obj_counter)
+                save_z(model, enc_feat=new_base_feats_enc,
+                       dec_feat=new_base_feats_dec,
+                       log_file=log_file, z_dir=z_dir, z_idx=obj_counter)
+                torch.save({"base_feats_enc": base_feats_enc,
+                            "base_feats_dec": base_feats_dec},
+                           os.path.join(checkpoint_dir, "base_feats.pth"))
             # ======================================================================================================
 
-        else:
+        else:  # original lin combo of existing bases works
             # save object's z
             util.write_log(
                 log_file, f"object {obj_counter} pursuit complete, save object z 'z_{'%04d' % obj_counter}.pth' to {z_dir}")
+            util.write_log(
+                log_file, f"final coeffs: {coeffs_enc_v2} {coeffs_dec_v2}")
 
             # save object's coeffs and output hypernet weights
-            linear_combo_obj_feats_enc_v1 = torch.sum(
-                new_coeffs_enc_v1 * torch.stack(obj_feats_enc), dim=0)
-            linear_combo_obj_feats_dec_v1 = torch.sum(
-                new_coeffs_dec_v1 * torch.stack(obj_feats_dec), dim=0)
-            new_obj_hyper_enc_v1, new_obj_hyper_dec_v1 = model.get_hypernet_weights(
-                obj_feats_enc=linear_combo_obj_feats_enc_v1,
-                obj_feats_dec=linear_combo_obj_feats_dec_v1)
-            torch.save(
-                {
-                    "z_enc": linear_combo_obj_feats_enc_v1,
-                    "z_dec": linear_combo_obj_feats_dec_v1,
-                    "weights_enc": new_obj_hyper_enc_v1,
-                    "weights_dec": new_obj_hyper_dec_v1
-                },
-                os.path.join(z_dir, f"z_{'%04d' % obj_counter}.pth"),
-            )
-
-        # record object (z) info
-        z_info.append({
-            "index": obj_counter,
-            "z_file": f"z_{'%04d' % obj_counter}.pth"
-        })
-
-        # update (save) info files
-        with open(os.path.join(checkpoint_dir, "z_info.json"), "w") as f:
-            json.dump(z_info, f)
-        with open(os.path.join(checkpoint_dir, "base_info.json"), "w") as f:
-            json.dump(base_info, f)
+            lin_enc_feats_v1 = torch.sum(
+                enc_coeffs_v1.view(num_bases, 1) * torch.stack(base_feats_enc).view(num_bases, -1), dim=0)
+            lin_dec_feats_v1 = torch.sum(
+                dec_coeffs_v1.view(num_bases, 1) * torch.stack(base_feats_dec).view(num_bases, -1), dim=0)
+            save_z(model, enc_feat=lin_enc_feats_v1,
+                   dec_feat=lin_dec_feats_v1,
+                   log_file=log_file, z_dir=z_dir, z_idx=obj_counter)
 
         util.write_log(
             log_file, f"save hypernet and backbone to {checkpoint_dir}, move to next object")

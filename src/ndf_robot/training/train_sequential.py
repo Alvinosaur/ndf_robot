@@ -165,8 +165,8 @@ with open(os.path.join(root_path, f"args.json"), "w") as outfile:
 ############################## Object Pursuit ##############################
 opt.checkpoint_path = "src/ndf_robot/model_weights/ndf_vnn/ndf_multi_pretraining/checkpoints/model_step_6300_multi.pth"
 pursuit_train_data_prop = 0.8
-express_threshold = 0.10  # loss threshold, chosen through empirical observation
-batch_size = 10  # small number, realistic for online adaptation
+express_threshold = 0.12  # loss threshold, chosen through empirical observation
+batch_size = 32  # small number, realistic for online adaptation
 model = vnn_object_pursuit.VNNOccNet_Pursuit_OP(
     dummy_num_objects=len(objects), obj_feat_dim=opt.obj_feat_dim,
     latent_dim=256).to(util.DEVICE)
